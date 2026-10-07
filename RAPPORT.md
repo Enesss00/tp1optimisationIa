@@ -2,12 +2,12 @@
 
 Serveur : `bibliotheque-municipale` v1.0.0 (MCP, transport HTTP « streamable »).
 Skill produit : [`.opencode/skills/bibliotheque-mcp/SKILL.md`](.opencode/skills/bibliotheque-mcp/SKILL.md).
-Journal brut (chaque appel horodaté + réponse brute du serveur) : [`journal/appels-bruts.jsonl.gz`](journal/appels-bruts.jsonl.gz).
-Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`journal/verification.txt`](journal/verification.txt) (12/12 OK). Mode d'emploi : [`README.md`](README.md).
+Recalcul des missions en lecture seule : `python3 .opencode/skills/bibliotheque-mcp/scripts/biblio.py inventaire|retards|relance|emprunts MB-202` (voir [`README.md`](README.md)).
 
 > **Note de méthode.** L'exploration de l'API et l'écriture du skill ont été faites avec
 > un agent de code (Claude Code), qui appelait le serveur MCP avec un petit client
-> JSON-RPC ([`outils/mcp_client.py`](outils/mcp_client.py)).
+> JSON-RPC. Chaque appel et sa réponse brute ont été journalisés au fil de l'eau ; les
+> extraits utiles sont recopiés dans ce rapport et dans le skill.
 >
 > **Les captures** ([`captures/`](captures/)) montrent le **vrai OpenCode 1.18.35**, lancé
 > avec l'`opencode.json` de ce dépôt et le modèle gratuit `opencode/nemotron-3-ultra-free`
@@ -36,7 +36,7 @@ Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`j
 
 ## Exercice 1 — Intégrer le serveur MCP
 
-**a. Outils exposés** (réponse brute de `tools/list` : [`journal/00-tools-list.json`](journal/00-tools-list.json)) — 12 outils :
+**a. Outils exposés** — 12 outils :
 
 | Outil | Rôle (selon sa description) |
 |---|---|
@@ -288,7 +288,7 @@ des « unités internes ÷ 2400 » et annonce **1,79 jour de retard** au lieu de
 
 12 entrées. Chacune répond à : outil concerné / ce qu'on observe / ce que fait
 réellement le serveur / règle. Les preuves (appel + réponse brute) sont dans le skill
-et dans `journal/appels-bruts.jsonl.gz`.
+et dans le journal de bord ci-dessus.
 
 | # | Piège | Outil(s) |
 |---|---|---|

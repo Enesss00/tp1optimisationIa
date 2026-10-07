@@ -2,7 +2,6 @@
 .env
 .env.*
 *.token
-outils/session.txt
 
 # Modèle à committer
 !.env.example
