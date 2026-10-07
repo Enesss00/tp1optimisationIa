@@ -1,0 +1,4 @@
+# Secrets : le token MCP ne doit jamais être commité
+.env
+.env.*
+*.token
