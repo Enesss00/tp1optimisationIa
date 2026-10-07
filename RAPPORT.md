@@ -79,11 +79,26 @@ Dès la première exploration, l'agent a paginé `list_books` sans pause. Vers 1
 | `list_missions {}` | `{"ok": true, "items": []}` |
 | *(faux token, pour comparer)* | HTTP 401 `{"ok":false,"error":"unknown token"}` |
 
-Reproduit deux fois (12:21:33 et 12:23:03), chaque fois après ~60 appels dans la minute ;
-40 appels `count_books` en 9 s ne déclenchent rien, le seuil est donc vers 60/min.
-Retour à la normale après ~30–60 s. **Un agent qui ne vérifie pas conclurait « le
-catalogue est vide » ou « BK-1042 n'existe pas ».** Parade : ≤ 1 appel/s et appel
-témoin `count_books > 0` avant de croire un vide.
+Reproduit deux fois (12:21:33 et 12:23:03), puis **mesuré proprement** lors de la 2ᵉ
+analyse (13:15) : rafale de `count_books`, bridage au **61ᵉ appel** (61 appels en
+15,8 s), puis appel de chaque outil pendant le bridage :
+
+| Appel pendant le bridage | Réponse brute | Ce qu'un agent naïf conclurait |
+|---|---|---|
+| `get_member_fees {"member_id":"MB-225"}` | `{"ok":true,"member_id":null,"balance_due":0}` | « MB-225 ne doit rien » |
+| `get_member {"memberId":"MB-225"}` | `{"ok":true,"member":null}` | « adhérent inconnu » |
+| `get_mission {"mission_id":"M1"}` | `{"ok":true,"mission":null}` | « mission inexistante » |
+| `list_loans {"member_id":"MB-202","include_archived":true}` | `{"ok":true,"items":[],"next":null}` | « effacement prouvé » (M4 !) |
+| `create_loan {"member_id":"MB-214","book_id":"BK-1042"}` (sans `desk_code`) | `{"ok":true,"loan":null}` | « emprunt créé » (M3 !) |
+| `create_loan {…,"book_id":"BK-9999","desk_code":"A1"}` | `{"ok":true,"loan":null}` | (hors bridage : `invalid request`) |
+| `delete_loan {"loan_id":"LN-9999"}` | `{"ok":true,"deleted":false}` | (hors bridage : `not found`) |
+
+Retour à la normale 67,5 s après le début de la rafale (fenêtre glissante d'environ
+1 min). Vérification après coup : `list_loans {member_id:"MB-214", include_archived:true}`
+→ toujours 3 emprunts ; **aucune écriture n'a été prise en compte pendant le bridage**.
+Hors bridage, un id inconnu donne toujours `ok:false` : **`ok:true` + contenu `null` est
+donc la signature du bridage.** Parade : ≤ 1 appel/s, appel témoin `count_books > 0`,
+et vérifier le contenu de chaque réponse d'écriture.
 
 ### M1 — Inventaire
 
@@ -123,6 +138,16 @@ exemplaires en comptant les ouvrages archivés (retirés de la circulation).
 Blanc** — ouvrage **BK-1075 « Le Retour des autres »** (Yanis Perrin), prévu le
 2026-04-10 09:00 UTC → **179 jours de retard** à la date du serveur
 (2026-10-06 09:00 UTC). Montant dû par MB-225 : **26,85 €** (179 × 0,15 €).
+Ses 4 autres emprunts ont été rendus avant l'échéance : aucune pénalité passée oubliée.
+
+*Contrôles de la 2ᵉ analyse :*
+- L'horloge serveur est **toujours** figée une heure plus tard (13:17 UTC : encore 4296 h).
+- LN-5106 a un défaut dans les données : emprunté le **2026-03-27**, alors que BK-1075
+  n'est entré au catalogue que le **2026-04-18** (P13). La réponse reste LN-5106, puisque
+  c'est ce que disent les données de l'API, mais l'anomalie est signalée au conseil.
+- Le 2ᵉ (LN-5024, 169 j) est loin derrière : pas d'ex æquo possible.
+- Piège pour un agent : `list_loans {status:"overdue"}` renvoie `ok:true` et une liste
+  vide, comme si personne n'était en retard (P12).
 
 ### M3 — La réinscription
 
@@ -137,6 +162,11 @@ Blanc** — ouvrage **BK-1075 « Le Retour des autres »** (Yanis Perrin), prév
 **Réponse retenue** (tentatives : 5) : emprunt **LN-5137** créé (guichet A1, retour prévu
 le 2026-10-27, soit 21 j = `loan_duration` de BK-1042), visible dans
 `list_loans {member_id:"MB-214"}`.
+*2ᵉ analyse :* BK-1042 n'avait aucun emprunt ouvert (4 exemplaires), donc rien ne bloque
+le prêt. Attention cependant à deux faux succès possibles : pendant le bridage,
+`create_loan` répond `{"ok":true,"loan":null}` sans rien créer ; et relancer la mission
+créerait un 2ᵉ emprunt identique, puisque l'API laisse déjà prêter plus d'exemplaires
+qu'il n'en existe (BK-1012 : 3 prêts ouverts pour 2 exemplaires, P13).
 
 ### M4 — Le ménage
 
@@ -190,7 +220,12 @@ MB-242 Paul Guerin.
 `list_loans {"member_id":"MB-202"}` ne montre plus LN-5038 : l'agent annonce « supprimé
 et prouvé ». Or `list_loans {"member_id":"MB-202","include_archived":true}` renvoie
 toujours `{"loan_id":"LN-5038",…,"status":"returned","archived":true}`.
-Autres cas : M1 (« 184 ouvrages » d'après `count_books`) et le vide silencieux de P1.
+Autres cas :
+- M1 : « 184 ouvrages » d'après `count_books`.
+- Le bridage (P1) : `create_loan` → `{"ok":true,"loan":null}` est pris pour une
+  création, et `get_member_fees` → `balance_due: 0` pour une dette nulle.
+- `list_loans {status:"overdue"}` → `{"ok":true,"items":[]}` est pris pour « personne
+  n'est en retard » (P12).
 📷 Captures : `captures/03-m4-faux-succes.png`, `captures/04-m4-include-archived.png`
 
 ### Récapitulatif
@@ -225,15 +260,15 @@ Autres cas : M1 (« 184 ouvrages » d'après `count_books`) et le vide silencieu
 
 ### 3.2 Contenu
 
-11 entrées. Chacune répond à : outil concerné / ce qu'on observe / ce que fait
+13 entrées. Chacune répond à : outil concerné / ce qu'on observe / ce que fait
 réellement le serveur / règle. Les preuves (appel + réponse brute) sont dans le skill
 et dans `journal/appels-bruts.jsonl`.
 
 | # | Piège | Outil(s) |
 |---|---|---|
-| P1 | débit limité (~60/min) → **vides silencieux** avec `ok:true` | tous |
+| P1 | 60 appels/min, puis **faux succès** `ok:true` + `null`, **y compris pour les écritures et les frais** | tous |
 | P2 | `count_books` compte les archivés, `list_books` non | count_books |
-| P3 | `next` non nul après la fin → pages vides sans fin | list_* / search |
+| P3 | `next` non nul après la fin → pages vides ; `start_key` invalide → retour silencieux page 1 | list_* / search |
 | P4 | unités cachées : heures, centimes, euros | get_member_fees |
 | P5 | horloge serveur figée au 2026-10-06 09:00 UTC | fees, create_loan |
 | P6 | trois formats de date | books / members / loans |
@@ -242,14 +277,27 @@ et dans `journal/appels-bruts.jsonl`.
 | P9 | index de recherche périmé (livres récents absents) + archivés inclus | search_books |
 | P10 | e-mail `null` vs clé absente, inactifs, adresses en double | list_members / get_member |
 | P11 | `memberId` vs `member_id`, la fiche n'a pas les emprunts | get_member |
+| P12 | filtres stricts : valeur inconnue/mal casée → vide `ok:true` (pas de statut « overdue ») | list_books / list_loans |
+| P13 | anomalies de données : sur-prêts, emprunts antérieurs au livre ou à l'inscription, retours datés dans le futur | données |
 
 Écartés volontairement (comportements **documentés**, donc pas des pièges) : exclusion des
 archivés par `list_books`, `active_only`, tri par `loan_id`, `memberId` dans le schéma,
 plafond `limit` = 50 (sans perte de lignes). Listés en fin de skill pour éviter les faux
 positifs.
 
-Trouvailles « hors liste » probables : P5 (horloge figée), P9 (index de recherche
-périmé), doublons d'adresses (P10).
+Trouvailles « hors liste » probables, toutes avec preuve :
+- P1 étendu : les écritures aussi renvoient de faux succès pendant le bridage ;
+- P5 : horloge figée ;
+- P9 : index de recherche périmé ;
+- P12 : filtres muets ;
+- P13 : anomalies de données ;
+- doublons d'adresses (P10).
+
+**Méthode de la 2ᵉ analyse** : contrôles croisés de toutes les données téléchargées
+(dates, exemplaires, cohérence emprunts / livres / adhérents) ; tests de chaque paramètre
+avec des valeurs limites (casse, accents, valeurs inconnues, types, `start_key`
+invalide) ; appel de **chaque outil pendant le bridage** ; puis un agent
+« contradicteur » neuf a tenté de réfuter chaque entrée du skill (résultat ci-dessous).
 
 ### 3.3 La preuve
 
