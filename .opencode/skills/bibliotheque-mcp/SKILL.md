@@ -33,7 +33,7 @@ serveur**, **règle**.
    « n'existe pas » est `ok: false, error: "not found"`. Avant de conclure à un vide,
    fais un appel témoin (`count_books` > 0) et refais l'appel sans filtre.
 4. **Ne compte jamais de tête.** Sur des dizaines de lignes JSON, un modèle se trompe
-   (observé : 34 romans annoncés au lieu de 30, 462 exemplaires au lieu de 415). Fais
+   (observé : genres et exemplaires faux de 10 à 20 %, avec des totaux pourtant « vérifiés »). Fais
    compter le serveur (un filtre par valeur) ou écris un petit script (Python/jq) sur
    les réponses brutes enregistrées.
 5. **Recoupe** : un total se vérifie par deux chemins (compteur vs liste paginée, somme
@@ -239,16 +239,17 @@ mentionne quand elles touchent la réponse :
 Lire l'énoncé exact avec `get_mission {mission_id:"Mx"}`. Les recettes ci-dessous
 supposent que tu appliques la méthode générale (§0).
 
-**M1 — Inventaire.** Les comptes par genre viennent du **serveur**, pas d'un recomptage :
+**M1 — Inventaire.** La mission demande un nombre d'**ouvrages** (titres) et sa
+répartition par genre. Les comptes viennent du **serveur**, pas d'un recomptage :
 un `list_books {genre:<g>, limit:50}` par genre (`roman, policier, jeunesse, essai, bd,
-poésie`), sans puis avec `include_archived:true` (12 appels, une seule page chacun). Le
-nombre de titres = `len(items)`. Les exemplaires = somme des `copies`, à calculer avec
-un script, pas de tête. Vérifier : Σ genres = `list_books` paginé (158) et, avec
-archivés, = `count_books` (184). Annoncer : titres en circulation (+ exemplaires),
-titres archivés, total ; préciser que `count_books` = total archivés compris (P2).
-Résultat attendu à l'état du 2026-10-07 : 158 titres / 415 exemplaires en circulation
-(roman 30, jeunesse 30, poésie 29, policier 27, essai 23, bd 19) + 26 archivés
-= 184 titres / 490 exemplaires.
+poésie`), sans puis avec `include_archived:true` (12 appels, une seule page chacun) ;
+titres = nombre d'éléments de `items`. Vérifier : Σ genres = `list_books` paginé, et
+Σ genres avec archivés = `count_books`. Annoncer : titres en circulation, titres
+archivés, total, et préciser que `count_books` inclut les archivés (P2).
+Les **exemplaires** (somme des `copies`) ne sont pas demandés : ne les donner que s'ils
+sont calculés par un script sur les réponses brutes. Une somme faite de tête sur
+150 lignes est fausse (observé lors des tests). Si tu ne peux pas exécuter de
+script, écris « non calculé » plutôt qu'un chiffre approximatif.
 
 **M2 — Le retardataire.** (Ne pas chercher un `status:"overdue"`, il n'existe pas, P11.)
 `list_loans {status:"open", limit:50}` paginé en entier. La liste est triée par
