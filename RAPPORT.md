@@ -262,6 +262,18 @@ périmé), doublons d'adresses (P10).
 📷 Captures : `captures/05-m1-sans-skill.png`, `captures/06-m1-avec-skill.png`,
 `captures/07-m4-sans-skill.png`, `captures/08-m4-avec-skill.png`
 
+**Test du skill (agent neuf, sans historique).** Consigne donnée : lire uniquement le
+skill, puis faire M1, M2 et M5 en n'obtenant les données **que** du serveur (pas d'accès
+aux fichiers de l'exploration ; M3/M4 exclues pour ne pas modifier encore les données).
+Résultat : **les trois missions réussies du premier coup**, en 41 appels, sans aucun
+bridage :
+- M1 : 158 en circulation (415 ex.) + 26 archivés = 184 (490 ex.), répartition identique ;
+- M2 : LN-5106 / MB-225 Paul Blanc / BK-1075, 179 jours, 26,85 € ;
+- M5 : 20 joignables (19 adresses, doublon MB-200/MB-237), 5 `null` + 3 champ absent,
+  MB-219 inactif à part.
+L'agent cite lui-même P1, P2, P3, P4, P5, P10 et P11 comme utiles, et ne relève aucune
+contradiction entre le skill et le serveur.
+
 **b. Le skill est-il lu ?** OpenCode présente les skills dans la description de son
 outil `skill` (`<available_skills>…`). On le sait chargé quand l'agent appelle
 `skill({ name: "bibliotheque-mcp" })` : l'appel apparaît dans la session OpenCode avant
