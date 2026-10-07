@@ -105,7 +105,7 @@ et vérifier le contenu de chaque réponse d'écriture.
 | Étape | Appel | Réponse brute (extrait) | Conclusion / problème |
 |---|---|---|---|
 | 1 | `count_books {}` | `{"ok":true,"count":184}` | réponse naïve « 184 ouvrages » |
-| 2 | `list_books {}` paginé | 158 lignes ; pages vides à offset 160, 180… avec `next` non nul | **158 ≠ 184** ; pagination qui ne s'arrête pas (P3) |
+| 2 | `list_books {}` paginé | 158 lignes ; pages vides à offset 160, 180… avec `next` non nul ; `next` devient `null`… parce que le bridage s'est déclenché | **158 ≠ 184** ; pagination infinie (P3) qui provoque P1 |
 | 3 | `list_books {"include_archived":true}` paginé | 184 lignes dont 26 `archived:true` | `count_books` inclut les archivés (P2) |
 | 4 | `list_books {"genre":…}` × 6 | 30+27+30+23+19+29 = 158 | recoupement par genre OK |
 
@@ -143,11 +143,12 @@ Ses 4 autres emprunts ont été rendus avant l'échéance : aucune pénalité pa
 *Contrôles de la 2ᵉ analyse :*
 - L'horloge serveur est **toujours** figée une heure plus tard (13:17 UTC : encore 4296 h).
 - LN-5106 a un défaut dans les données : emprunté le **2026-03-27**, alors que BK-1075
-  n'est entré au catalogue que le **2026-04-18** (P13). La réponse reste LN-5106, puisque
+  n'est entré au catalogue que le **2026-04-18** (P12). La réponse reste LN-5106, puisque
   c'est ce que disent les données de l'API, mais l'anomalie est signalée au conseil.
 - Le 2ᵉ (LN-5024, 169 j) est loin derrière : pas d'ex æquo possible.
-- Piège pour un agent : `list_loans {status:"overdue"}` renvoie `ok:true` et une liste
-  vide, comme si personne n'était en retard (P12).
+- Piège d'usage : `list_loans {status:"overdue"}` renvoie `ok:true` et une liste vide,
+  comme si personne n'était en retard. `status` n'accepte que `open`/`returned`, c'est
+  documenté (cf. P11).
 
 ### M3 — La réinscription
 
@@ -164,9 +165,11 @@ le 2026-10-27, soit 21 j = `loan_duration` de BK-1042), visible dans
 `list_loans {member_id:"MB-214"}`.
 *2ᵉ analyse :* BK-1042 n'avait aucun emprunt ouvert (4 exemplaires), donc rien ne bloque
 le prêt. Attention cependant à deux faux succès possibles : pendant le bridage,
-`create_loan` répond `{"ok":true,"loan":null}` sans rien créer ; et relancer la mission
-créerait un 2ᵉ emprunt identique, puisque l'API laisse déjà prêter plus d'exemplaires
-qu'il n'en existe (BK-1012 : 3 prêts ouverts pour 2 exemplaires, P13).
+`create_loan` répond `{"ok":true,"loan":null}` sans rien créer. Et relancer la mission
+risque de créer un 2ᵉ emprunt identique : rien dans le schéma ne l'interdit, et la base
+contient déjà des sur-prêts (BK-1012 : 3 prêts ouverts pour 2 exemplaires, P12). Ce
+point n'a pas été testé, pour ne pas polluer la base ; le skill demande de vérifier
+avant de créer.
 
 ### M4 — Le ménage
 
@@ -211,8 +214,9 @@ MB-242 Paul Guerin.
 - e-mail `null` (5) : MB-203, MB-212, MB-226, MB-232, MB-234 ;
 - champ e-mail absent (3) : MB-206, MB-235, MB-241.
 
-*Cas à part — 1 :* MB-219 Sarah Guerin, adhésion **inactive** mais e-mail renseigné
-(joignable techniquement ; à relancer ou non selon la politique de la médiathèque).
+*Cas à part — 1 :* MB-219 Sarah Guerin, adhésion **inactive** mais e-mail renseigné, et
+encore 3 emprunts ouverts dont 2 en retard (joignable techniquement ; à relancer ou non
+selon la politique de la médiathèque).
 
 ### 2.1 b — Un cas où l'agent s'est déclaré satisfait d'un résultat faux
 
@@ -225,7 +229,7 @@ Autres cas :
 - Le bridage (P1) : `create_loan` → `{"ok":true,"loan":null}` est pris pour une
   création, et `get_member_fees` → `balance_due: 0` pour une dette nulle.
 - `list_loans {status:"overdue"}` → `{"ok":true,"items":[]}` est pris pour « personne
-  n'est en retard » (P12).
+  n'est en retard ».
 📷 Captures : `captures/03-m4-faux-succes.png`, `captures/04-m4-include-archived.png`
 
 ### Récapitulatif
@@ -260,44 +264,66 @@ Autres cas :
 
 ### 3.2 Contenu
 
-13 entrées. Chacune répond à : outil concerné / ce qu'on observe / ce que fait
+12 entrées. Chacune répond à : outil concerné / ce qu'on observe / ce que fait
 réellement le serveur / règle. Les preuves (appel + réponse brute) sont dans le skill
 et dans `journal/appels-bruts.jsonl`.
 
 | # | Piège | Outil(s) |
 |---|---|---|
 | P1 | 60 appels/min, puis **faux succès** `ok:true` + `null`, **y compris pour les écritures et les frais** | tous |
-| P2 | `count_books` compte les archivés, `list_books` non | count_books |
-| P3 | `next` non nul après la fin → pages vides ; `start_key` invalide → retour silencieux page 1 | list_* / search |
+| P2 | `count_books` compte les archivés (ambigu) et ignore ses paramètres en silence | count_books |
+| P3 | `next` **jamais** `null` → boucle infinie ; `start_key` invalide → retour silencieux page 1 | list_* / search |
 | P4 | unités cachées : heures, centimes, euros | get_member_fees |
 | P5 | horloge serveur figée au 2026-10-06 09:00 UTC | fees, create_loan |
 | P6 | trois formats de date | books / members / loans |
 | P7 | `desk_code` obligatoire, non documenté, erreur muette | create_loan |
 | P8 | suppression = archivage, `deleted:true` mensonger | delete_loan |
-| P9 | index de recherche périmé (livres récents absents) + archivés inclus | search_books |
+| P9 | index de recherche périmé (3 livres récents absents) + sensible aux accents | search_books |
 | P10 | e-mail `null` vs clé absente, inactifs, adresses en double | list_members / get_member |
-| P11 | `memberId` vs `member_id`, la fiche n'a pas les emprunts | get_member |
-| P12 | filtres stricts : valeur inconnue/mal casée → vide `ok:true` (pas de statut « overdue ») | list_books / list_loans |
-| P13 | anomalies de données : sur-prêts, emprunts antérieurs au livre ou à l'inscription, retours datés dans le futur | données |
+| P11 | `member_id` inconnu ou mal casé → vide `ok:true` (au lieu de `not found`) | list_loans |
+| P12 | anomalies de données : sur-prêts, emprunts antérieurs au livre ou à l'inscription, retours datés dans le futur | données |
 
-Écartés volontairement (comportements **documentés**, donc pas des pièges) : exclusion des
-archivés par `list_books`, `active_only`, tri par `loan_id`, `memberId` dans le schéma,
-plafond `limit` = 50 (sans perte de lignes). Listés en fin de skill pour éviter les faux
-positifs.
+Écartés volontairement (comportements **documentés** ou erreurs explicites, donc pas des
+pièges) : exclusion des archivés par `list_books`, `active_only`, tri par `loan_id`,
+`memberId` dans le schéma de `get_member`, fiche adhérent sans emprunts, valeurs de
+`genre`/`status` hors liste, `not found` sensibles à la casse, plafond `limit` = 50 (sans
+perte de lignes), absence de mission cachée. Ils sont listés en fin de skill pour éviter
+les faux positifs.
 
 Trouvailles « hors liste » probables, toutes avec preuve :
 - P1 étendu : les écritures aussi renvoient de faux succès pendant le bridage ;
 - P5 : horloge figée ;
 - P9 : index de recherche périmé ;
-- P12 : filtres muets ;
-- P13 : anomalies de données ;
+- P11 : filtre adhérent muet ;
+- P12 : anomalies de données ;
+- P3 : `next` infini ;
+- P9 : recherche sensible aux accents ;
 - doublons d'adresses (P10).
 
 **Méthode de la 2ᵉ analyse** : contrôles croisés de toutes les données téléchargées
 (dates, exemplaires, cohérence emprunts / livres / adhérents) ; tests de chaque paramètre
 avec des valeurs limites (casse, accents, valeurs inconnues, types, `start_key`
 invalide) ; appel de **chaque outil pendant le bridage** ; puis un agent
-« contradicteur » neuf a tenté de réfuter chaque entrée du skill (résultat ci-dessous).
+« contradicteur » neuf, en lecture seule, a tenté de réfuter chaque entrée du skill.
+
+**Résultat de la contre-relecture** (128 appels, données recollectées depuis le serveur) :
+- **tous les chiffres confirmés** : 158/184/26, 415/490, répartition par genre, 179 j,
+  26,85 €, 0 écart de frais sur 46 adhérents, 20/19/5/3/1 pour M5, 3 livres absents de
+  la recherche, sur-prêts, anomalies de dates ;
+- **une erreur corrigée** : j'écrivais que `next` finissait par valoir `null` vers
+  l'offset 360. En réalité, ce `null` venait… du bridage (P1), déclenché par ma propre
+  pagination. `next` ne vaut **jamais** `null` (offset 5000 → `next` = 5020). C'est
+  exactement le piège croisé « boucle infinie → bridage → faux signal de fin » ;
+- **faux positifs retirés ou atténués** :
+  - `memberId` et la fiche sans emprunts sont documentés ;
+  - les valeurs `genre`/`status` hors liste sont documentées ;
+  - « la recherche inclut les archivés » est une différence, pas un mensonge ;
+  - `count_books` = 184 est défendable ;
+  - « `create_loan` ne vérifie pas la disponibilité » est devenu une hypothèse ;
+- **ajouts** : recherche sensible aux accents (`Lea` → 0, `Léa` → 17) ; `count_books`
+  ignore `include_archived` ; filtre `member_id` muet (vide au lieu de `not found`) ;
+  MB-219 inactif avec 2 emprunts en retard ; débit conseillé ramené de « 1/s » (= la limite
+  elle-même) à 50/min.
 
 ### 3.3 La preuve
 

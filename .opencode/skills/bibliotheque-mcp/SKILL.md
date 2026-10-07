@@ -23,11 +23,13 @@ serveur**, **règle**.
 
 ## 0. Méthode générale (à appliquer à chaque mission)
 
-1. **Débit ≤ 1 appel/seconde**, et pas plus d'une cinquantaine d'appels par minute (voir P1).
-2. **Pagination** : boucle sur `next` mais **arrête-toi à la première page vide** (voir P3).
+1. **Débit ≤ 50 appels/minute** (un appel toutes les 1,2 s) : la limite est 60, et un
+   appel par seconde tombe pile dessus (voir P1).
+2. **Pagination** : `next` ne vaut **jamais** `null`. Arrête-toi à la **première page qui
+   contient moins de `limit` lignes** (voir P3).
    Prends `limit: 50` (le maximum effectif) pour économiser des appels.
 3. **`ok: true` ne prouve rien.** Un contenu `null` ou vide avec `ok: true` signifie
-   « bridé » (P1) ou « filtre mal orthographié » (P12), jamais « n'existe pas » : le vrai
+   « bridé » (P1) ou « filtre qui ne correspond à rien » (P11), jamais « n'existe pas » : le vrai
    « n'existe pas » est `ok: false, error: "not found"`. Avant de conclure à un vide,
    fais un appel témoin (`count_books` > 0) et refais l'appel sans filtre.
 4. **Recoupe** : un total se vérifie par deux chemins (compteur vs liste paginée, somme
@@ -60,38 +62,40 @@ serveur**, **règle**.
 - **Signature à reconnaître** : `"ok": true` **avec un contenu `null`** (`book`, `member`,
   `mission`, `loan`, `member_id`) ou `count: 0` signifie « bridé », jamais « absent ».
   Le vrai « absent » est toujours `ok: false`.
-- **Règle** : garder un débit ≤ 1 appel/s (≤ 50/min). Après chaque **écriture**, vérifier
+- **Règle** : garder un débit ≤ 50 appels/min (1 appel toutes les 1,2 s). Après chaque **écriture**, vérifier
   que `loan` contient bien un `loan_id`. Ne jamais annoncer « 0 € dû », « aucun
   emprunt » ou « catalogue vide » sans appel témoin (`count_books` > 0). Si un vide
   apparaît au milieu d'une pagination, attendre ~60 s et refaire la page, sinon le total
   est faux.
 
-### P2 — `count_books` ne compte pas la même chose que `list_books`
-- **Observé** : `count_books` → `184` ; `list_books` paginé jusqu'au bout → **158** livres.
+### P2 — `count_books` : un total ambigu qui ignore ses paramètres
+- **Observé** : `count_books` → `184` ; `list_books` paginé jusqu'au bout → **158**.
+  `count_books {include_archived:false}` → encore `{"ok":true,"count":184}` : le paramètre
+  est ignoré sans erreur (l'outil n'en déclare aucun).
 - **Réalité** : `count_books` inclut les **26 ouvrages archivés** (retirés de la
-  circulation). `list_books` les exclut par défaut — ça, c'est documenté dans sa
-  description et ce n'est pas un bug. Le piège est que la description de `count_books`
-  (« size of the catalogue ») ne le dit pas, et qu'il n'a aucun paramètre pour choisir.
-  `list_books {include_archived: true}` → 184, ce qui réconcilie les deux.
-- **Règle** : ne jamais donner `count_books` comme « nombre d'ouvrages » sans préciser
-  qu'il inclut les archivés. Toujours recompter avec `list_books` (avec et sans
-  `include_archived`) et vérifier que la somme par genre égale le total.
-  Distinguer aussi **titres** (lignes) et **exemplaires** (champ `copies`).
+  circulation). C'est défendable (la description de `list_books` range les archivés dans
+  « the catalogue ») mais ambigu. Rien n'indique qu'un agent obtiendra 184 avec l'un et
+  158 avec l'autre, et on ne peut pas demander à `count_books` le nombre « en
+  circulation ». `list_books {include_archived:true}` → 184 réconcilie les deux.
+- **Règle** : ne jamais donner `count_books` seul comme « nombre d'ouvrages ». Recompter
+  avec `list_books` (avec et sans `include_archived`), vérifier Σ genres = total, et
+  distinguer **titres** (lignes) et **exemplaires** (champ `copies`).
 
-### P3 — `next` n'est jamais `null` à la fin des données
+### P3 — Pagination : `next` ne vaut jamais `null`
 - **Outils** : `list_books`, `list_members`, `list_loans`, `search_books`.
-- **Observé** : la page qui suit la dernière ligne renvoie `items: []` **et un `next`
-  non nul** ; ça continue sur plusieurs pages vides (ex. `list_books` défaut : pages
-  vides à offset 160, 180, …, 340 avant que `next` passe à `null`).
-- **Réalité** : `next` est un offset encodé en base64 (`"MjA="` = `"20"`) qui avance
-  sans tenir compte de la fin des données.
-- **Règle** : arrêter la pagination à la **première page vide** (ou dès que
-  `len(items) < limit`, en vérifiant par un appel de plus). Une boucle « tant que `next`
-  existe » gaspille ~10 appels par liste et déclenche P1, qui fausse alors le reste.
+- **Observé** : au-delà de la dernière ligne, chaque page renvoie `items: []` **et un
+  `next` non nul**, à l'infini : `start_key` à l'offset 5000 → `items: []`,
+  `next: "NTAyMA=="` (= 5020). Même une page incomplète a un `next`
+  (`search_books {query:"Maison"}` → 11 lignes, `next: "MjA="`).
+- **Réalité** : `next` est un offset encodé en base64 (`"MjA="` = `"20"`), incrémenté sans
+  regarder la fin des données.
+- **Règle** : une boucle « tant que `next` existe » est **infinie** : elle épuise le quota
+  (P1), puis les pages bridées reviennent vides avec `next: null`, ce qui donne
+  l'illusion d'une fin normale. Arrêter dès que `len(items) < limit` (avec
+  `limit: 50`, la valeur maximale).
 - **Aggravant** : une `start_key` invalide (`"abc"`) ne renvoie pas d'erreur, elle
-  **repart de la première page** (`BK-1000…`). Un agent qui abîme la clé reboucle
-  sur les mêmes lignes. Dédoublonner par identifiant (`book_id`, `loan_id`,
-  `member_id`) et stopper si une page n'apporte aucun id nouveau.
+  **repart de la première page** (`BK-1000…`). Dédoublonner par identifiant et stopper si
+  une page n'apporte aucun id nouveau.
 - *Comportement normal à connaître (pas un piège)* : `limit` est plafonné à **50** ;
   `limit` à 0, négatif ou non numérique revient silencieusement à 20 ;
   `limit: 100` renvoie 50 lignes avec un `next` cohérent, donc rien n'est perdu.
@@ -115,7 +119,7 @@ serveur**, **règle**.
   `1791277200` (2026-10-06T09:00:00Z), pas à l'heure réelle ; `create_loan` crée un
   emprunt avec `started_at: 1791277200` quel que soit le moment de l'appel.
 - **Réalité** : le serveur raisonne sur une date de référence fixe. Avec l'horloge de
-  la machine, on trouve 180,1 jours au lieu de 179 et on ne retombe pas sur ses frais.
+  la machine, on trouve plus de 180 jours au lieu de 179 (selon l'heure de l'appel) et on ne retombe pas sur ses frais.
 - Vérifié à une heure d'intervalle : `get_member_fees MB-225` renvoie toujours 4296 h.
 - **Règle** : « actuellement » = `2026-10-06T09:00:00Z` (`1791277200`). Le retrouver si
   besoin via `overdue_duration` d'un adhérent ou le `started_at` d'un emprunt créé.
@@ -147,26 +151,32 @@ serveur**, **règle**.
   `"archived": true` et toutes ses données. Rappeler `delete_loan` sur le même id
   renvoie encore `deleted: true` sans rien changer. Aucun outil ne fait de vraie
   suppression.
-- **Réalité** : suppression logique (soft delete) contraire à la description (« Deletes
-  a loan from the register »).
+- **Réalité** : suppression logique (soft delete), contraire à la description (« Deletes
+  a loan from the register »). Seul indice : le paramètre `include_archived` de
+  `list_loans`, qui ne dit pas que `delete_loan` alimente les archives.
 - **Règle** : pour **prouver** une suppression, interroger **avec**
   `include_archived: true`. Si la demande est un effacement réel (RGPD), dire clairement
   que l'API ne peut que masquer/archiver et que les données restent en base. Ne jamais
   annoncer « supprimé » sur la seule foi de `deleted: true`.
 
-### P9 — `search_books` : index périmé, et il inclut les archivés
-- **Observé** : `search_books {query:"Maison de verre"}` → `items: []`, alors que
-  `get_book {book_id:"BK-1024"}` renvoie bien « La Maison de verre » (non archivé). En
-  cherchant tous les noms d'auteurs, 3 livres ne sortent jamais : BK-1116, BK-1181,
-  BK-1024, soit exactement les livres ajoutés après le 2026-08-25 (les plus récents).
-  À l'inverse, la recherche renvoie des livres **archivés** (ex. 4 sur 11 pour
-  « Maison »), contrairement à `list_books`.
-- **Réalité** : la recherche porte sur un index qui n'a pas été remis à jour depuis le
-  dernier mois et qui ne filtre pas l'archivage.
+### P9 — `search_books` : index périmé et sensible aux accents
+- **Observé** :
+  - `search_books {query:"Maison de verre"}` → `items: []`, alors que
+    `get_book {book_id:"BK-1024"}` renvoie bien « La Maison de verre » (non archivé). En
+    croisant les recherches avec les 184 livres, exactement 3 ne sortent jamais :
+    BK-1116, BK-1181, BK-1024, ajoutés du 23/09 au 27/09/2026. Le plus récent trouvé date
+    du 25/08/2026.
+  - `{query:"Lea"}` → 0, `{query:"Léa"}` → 17 ; `{query:"memoire"}` → 0,
+    `{query:"Mémoire"}` → 7. La casse, elle, est ignorée (`"MAISON"` = `"maison"` = 11).
+- **Réalité** : la recherche porte sur un index qui n'a pas été remis à jour depuis
+  fin août, et la comparaison tient compte des accents sans le dire (« full-text »
+  laisse attendre l'inverse).
 - **Règle** : « introuvable par la recherche » ne veut pas dire « absent du catalogue ».
-  Pour savoir si un livre existe, utiliser `get_book` ou filtrer localement le résultat
-  de `list_books {include_archived:true}`. Filtrer `archived` soi-même dans les
-  résultats de recherche.
+  Pour savoir si un livre existe, utiliser `get_book` ou filtrer localement
+  `list_books {include_archived:true}`. Taper les accents exacts.
+- *À savoir (différence, pas mensonge)* : la recherche renvoie aussi des livres
+  **archivés** (4 sur 11 pour « Maison »), contrairement à `list_books`. Filtrer
+  `archived` soi-même.
 
 ### P10 — Adhérents sans e-mail : deux représentations, plus les inactifs et les doublons
 - **Observé** dans `list_members` / `get_member` :
@@ -175,38 +185,37 @@ serveur**, **règle**.
   - adhérent **inactif** avec un e-mail valide (ex. MB-219, `"active": false`) ;
   - **même adresse sur deux fiches** : MB-200 et MB-237 (Yanis Robin,
     `yanis.robin@example.org`), aussi MB-215/MB-240 et MB-224/MB-239.
+- Sur les 46 adhérents : 10 `null`, 5 clés absentes, 3 inactifs (dont MB-205, inactif
+  **et** sans e-mail).
 - **Règle** : tester `member.get("email")` (couvre null **et** absent), mais **rapporter
-  les deux cas séparément**. Traiter les inactifs à part. Dédoublonner les adresses avant
-  un envoi (sinon une personne reçoit deux relances).
+  les deux cas séparément**. Traiter les inactifs à part : MB-219, inactif, a encore
+  3 emprunts ouverts dont 2 en retard. Dédoublonner les adresses avant un envoi (sinon
+  une personne reçoit deux relances).
 
-### P11 — Petites incohérences d'interface (pas des bugs, mais à connaître)
-- `get_member` prend **`memberId`** (camelCase) ; tous les autres outils prennent
-  `member_id`. C'est dans le schéma ; `member_id` sur `get_member` → `"invalid request"`.
-- La « fiche » adhérent (`get_member`) **ne contient pas les emprunts** : pour vérifier
-  un emprunt, utiliser `list_loans {member_id}` (et `get_member_fees` → `open_loans`).
-- Les identifiants sont sensibles à la casse : `mb-214` → `not found`.
+### P11 — `list_loans` : un `member_id` inconnu donne un vide, pas une erreur
+- **Observé** : `list_loans {member_id:"MB-999"}` → `{"ok":true,"items":[],…}`, et
+  `list_loans {member_id:"mb-202"}` (minuscules) → pareil. Pour le même identifiant,
+  `get_member_fees {member_id:"MB-999"}` → `{"ok":false,"error":"not found"}`,
+  `get_member {memberId:"mb-214"}` → `not found`.
+- **Réalité** : le filtre est une comparaison exacte qui ne vérifie pas que l'adhérent
+  existe. Un adhérent mal saisi est indiscernable d'un adhérent sans emprunt. C'est
+  dangereux pour M4 : « prouver que les emprunts ont disparu » avec un id mal tapé
+  réussit toujours.
+- **Règle** : valider l'id d'abord avec `get_member {memberId}` (qui, lui, répond
+  `not found`), puis filtrer.
+- *Même mécanique, mais avec des valeurs documentées* : `genre` et `status` n'acceptent
+  que les valeurs listées dans leur description (`roman, policier, jeunesse, essai, bd,
+  poésie` ; `open`, `returned`). Toute autre valeur (`"Poésie"`, `"BD"`, `"overdue"`,
+  `"OPEN"`) donne un vide `ok:true`. Il n'existe pas de statut « en retard » : un retard,
+  c'est `status:"open"` et `due_at < 1791277200`.
 
-### P12 — Filtres stricts : une valeur inattendue donne un vide, pas une erreur
-- **Outils** : `list_books` (`genre`), `list_loans` (`status`, `member_id`).
-- **Observé** (`"ok": true, "items": []` à chaque fois) :
-  `list_books {genre:"Poésie"}`, `{genre:"poesie"}`, `{genre:"BD"}`, `{genre:"Roman"}`,
-  `{genre:"xyz"}` ; `list_loans {status:"overdue"}`, `{status:"OPEN"}`, `{status:"late"}`,
-  `{status:"returned "}` ; `list_loans {member_id:"mb-202"}`, `{member_id:"MB-999"}`.
-  À l'inverse, `get_member_fees {member_id:"MB-999"}` répond bien `not found`.
-- **Réalité** : la comparaison est exacte (casse, accents, espaces) et une valeur inconnue
-  ne lève jamais d'erreur. Les valeurs valides sont celles des descriptions :
-  `roman, policier, jeunesse, essai, bd, poésie` (minuscules, avec l'accent) et
-  `open` / `returned`. Il n'existe **pas** de statut « en retard » : un retard, c'est
-  `status:"open"` et `due_at < 1791277200`.
-- **Règle** : copier les valeurs exactement depuis la description. Devant un résultat
-  vide filtré, refaire l'appel sans filtre et filtrer localement avant de conclure.
-
-### P13 — Anomalies dans les données (à signaler, pas à « corriger »)
+### P12 — Anomalies dans les données (à signaler, pas à « corriger »)
 Ce n'est pas l'API qui ment, ce sont les données qui sont sales. Un bon rapport les
 mentionne quand elles touchent la réponse :
 - **Sur-prêt** : des livres ont plus d'emprunts ouverts que d'exemplaires (BK-1027 :
-  2 ouverts pour `copies:1` ; BK-1012 : 3 pour 2 ; BK-1151 : 2 pour 1).
-  `create_loan` ne semble donc pas vérifier la disponibilité.
+  2 ouverts pour `copies:1` ; BK-1012 : 3 pour 2 ; BK-1151 : 2 pour 1). On ne sait pas
+  si `create_loan` vérifie la disponibilité (non testé, pour ne pas polluer la base) :
+  ne pas compter sur lui pour l'empêcher.
 - **Emprunt antérieur à l'entrée du livre au catalogue** : 3 cas, dont **LN-5106**
   (la réponse de M2 : emprunté le 2026-03-27, BK-1075 ajouté le 2026-04-18), LN-5061
   et LN-5108.
@@ -214,7 +223,8 @@ mentionne quand elles touchent la réponse :
   15/08/2026, a emprunté LN-5020 le 2026-03-31). `joined_at` est bien en JJ/MM : 28
   dates ont un premier nombre > 12 et aucune un second > 12.
 - **Retours datés dans le futur** : 5 emprunts `returned` ont un `returned_at` postérieur
-  à la date de référence (ex. LN-5092 : retourné le 2026-11-03). Ils ne sont pas en
+  à la date de référence (LN-5027, 5028, 5053, 5058, 5092). LN-5092, emprunté le jour
+  même de la référence, est déjà « rendu » le 2026-11-03. Ils ne sont pas en
   retard (échéance future) et ne changent ni M2 ni M5.
 - **Adresses en double** : voir P10.
 
@@ -230,28 +240,31 @@ supposent que tu appliques la méthode générale (§0).
 titres en circulation (+ exemplaires), titres archivés, total ; préciser que
 `count_books` = total archivés compris (P2). Vérifier : Σ genres = total.
 
-**M2 — Le retardataire.** (Ne pas chercher un `status:"overdue"`, il n'existe pas, P12.) `list_loans {status:"open", limit:50}` paginé en entier
-(l'emprunt le plus en retard n'est pas dans la 1ʳᵉ page). Retard = `1791277200 − due_at`
+**M2 — Le retardataire.** (Ne pas chercher un `status:"overdue"`, il n'existe pas, P11.)
+`list_loans {status:"open", limit:50}` paginé en entier. La liste est triée par
+`loan_id`, pas par date : avec la limite par défaut de 20, le plus en retard (40ᵉ des
+ouverts) n'est pas sur la 1ʳᵉ page. Retard = `1791277200 − due_at`
 (P5), en jours = ÷ 86400. Prendre le max ; `get_member` (avec `memberId`) et `get_book`
 pour les noms ; `get_member_fees` pour le montant en € (`balance_due`, P4 ; un `0` avec `member_id: null` = bridé, P1).
-Mentionner l'anomalie de date de LN-5106 (P13). Vérifier
+Mentionner l'anomalie de date de LN-5106 (P12). Vérifier
 `balance_due = Σ jours de retard de ses emprunts ouverts × 0,15`.
 
-**M3 — La réinscription.** D'abord `list_loans {member_id:"MB-214"}` : si un emprunt
+**M3 — La réinscription.** Les « fiches » `get_member` ne contiennent pas les emprunts
+(la description dit seulement « member record ») : la vérification se fait avec
+`list_loans {member_id}`. D'abord `list_loans {member_id:"MB-214"}` : si un emprunt
 **ouvert** de BK-1042 existe déjà, ne pas en recréer (`create_loan` ne protège pas
-contre les doublons, cf. P13). Sinon `create_loan` avec `desk_code` (P7), et vérifier
+contre les doublons, cf. P12). Sinon `create_loan` avec `desk_code` (P7), et vérifier
 que la réponse contient un `loan.loan_id` (un `loan: null` signifie bridé, P1). Vérifier avec
-`list_loans {member_id}` (pas `get_member`, P11) et `get_member_fees.open_loans` +1.
+`list_loans {member_id}` et `get_member_fees.open_loans` +1.
 
-
-**M4 — Le ménage.** `list_loans {member_id, status:"returned"}` → **noter tous les
+**M4 — Le ménage.** Valider l'id avec `get_member` (P11), puis `list_loans {member_id, status:"returned"}` → **noter tous les
 `loan_id` d'abord** (la pagination est par offset : archiver pendant qu'on pagine
 décale les pages) → `delete_loan` sur chacun, en vérifiant `deleted: true` (un
 `deleted: false` avec `ok: true` = bridé, P1) → preuve avec `list_loans {member_id, include_archived:true}` : les emprunts
 sont toujours là avec `archived:true` (P8). Rapporter honnêtement : masqués, pas
 effacés. Ne pas toucher aux emprunts encore ouverts.
 
-**M5 — La relance.** Emprunts ouverts avec `due_at < 1791277200` → ensemble des
+**M5 — La relance.** Emprunts ouverts avec `due_at < 1791277200` (49 sur 54 ouverts) → ensemble des
 adhérents → classer : joignable (actif + e-mail), e-mail `null`, clé e-mail absente,
 inactif (P10). Signaler les adresses en double.
 
@@ -261,7 +274,13 @@ inactif (P10). Signaler les adresses en double.
 - `list_books` qui exclut les archivés par défaut : documenté.
 - `list_members {active_only:true}` : renvoie exactement les 43 actifs, correct.
 - `list_loans` trié par `loan_id` : documenté, et vérifié.
-- `get_member` en `memberId` : déclaré dans le schéma de l'outil.
+- `get_member` en `memberId` (les autres outils prennent `member_id`) : déclaré dans le
+  schéma ; `get_member {member_id}` → `invalid request`, explicite.
+- La fiche `get_member` sans emprunts : la description ne promet qu'un « member record ».
+- Identifiants sensibles à la casse (`mb-214`, `bk-1042`) : les outils `get_*` répondent
+  `not found`, c'est explicite (seul le filtre `list_loans` se tait, cf. P11).
+- Les valeurs de `genre` / `status` hors liste qui donnent un vide : les valeurs
+  admises sont dans la description (cf. P11 pour la nuance).
 - `limit` plafonné à 50 : `next` reste cohérent, aucune ligne perdue.
 - Les erreurs explicites (`not found`, `invalid request`) : elles sont fiables.
 - `create_loan` avec un livre ou un adhérent inexistant : refusé (`invalid request`).
