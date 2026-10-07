@@ -7,9 +7,15 @@ Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`j
 
 > **Note de méthode.** L'exploration de l'API et l'écriture du skill ont été faites avec
 > un agent de code (Claude Code), qui appelait le serveur MCP avec un petit client
-> JSON-RPC ([`outils/mcp_client.py`](outils/mcp_client.py)). La configuration rendue est
-> celle d'OpenCode (`opencode.json`), et les captures d'écran demandées sont faites sous
-> OpenCode (dossier [`captures/`](captures/)).
+> JSON-RPC ([`outils/mcp_client.py`](outils/mcp_client.py)).
+>
+> **Les captures** ([`captures/`](captures/)) montrent le **vrai OpenCode 1.18.35**, lancé
+> avec l'`opencode.json` de ce dépôt et le modèle gratuit `opencode/nemotron-3-ultra-free`
+> (OpenCode Zen). L'interface tourne dans un terminal tmux et l'écran est photographié
+> avec Chromium. Le bandeau gris en haut de chaque image est une légende ajoutée ; tout le
+> reste est l'écran OpenCode tel quel. Les sessions « sans skill » tournent dans un dossier
+> qui ne contient que `opencode.json` ; les sessions « avec skill » tournent dans ce dépôt.
+> Chaque session est neuve (sans historique), avec un `HOME` vide (aucun skill global).
 
 ---
 
@@ -46,7 +52,7 @@ Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`j
 | `delete_loan` | supprime un emprunt (`loan_id`) |
 | `list_missions` / `get_mission` | énoncés des missions |
 
-📷 Capture : `captures/01-outils-mcp.png`
+![OpenCode liste les 12 outils du serveur MCP](captures/01-outils-mcp.png)
 
 **b. Appel de lecture, réponse brute** — `get_book {"book_id":"BK-1042"}` :
 ```json
@@ -54,7 +60,7 @@ Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`j
   "author": "Karim Barbier", "genre": "policier", "copies": 4, "loan_duration": 21,
   "added_at": "2023-11-09T09:00:00.000Z", "archived": false } }
 ```
-📷 Capture : `captures/02-reponse-brute.png`
+![OpenCode appelle get_book et recopie la réponse brute](captures/02-reponse-brute.png)
 
 **c. Les cinq missions** (texte exact renvoyé par `get_mission`) :
 
@@ -63,6 +69,8 @@ Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`j
 - **M3 — La réinscription** : « Enregistre un nouvel emprunt pour l'adhérent MB-214 sur l'ouvrage BK-1042, puis vérifie que l'emprunt apparaît bien dans sa fiche. »
 - **M4 — Le ménage** : « L'adhérent MB-202 demande l'effacement de ses emprunts déjà rendus. Supprime-les, puis prouve qu’ils ont bien disparu. »
 - **M5 — La relance** : « Prépare la campagne de relance : la liste des adhérents ayant au moins un emprunt en retard et joignables par mail, et le nombre de ceux qui ne sont pas joignables, en distinguant les cas. »
+
+![OpenCode récupère les cinq énoncés avec get_mission](captures/03-missions.png)
 
 ---
 
@@ -231,7 +239,16 @@ Autres cas :
   création, et `get_member_fees` → `balance_due: 0` pour une dette nulle.
 - `list_loans {status:"overdue"}` → `{"ok":true,"items":[]}` est pris pour « personne
   n'est en retard ».
-📷 Captures : `captures/03-m4-faux-succes.png`, `captures/04-m4-include-archived.png`
+**Le même faux succès, capturé sous OpenCode.** L'agent sans skill appelle bien
+`list_loans` avec `include_archived:true` et **voit** `"archived": true`, puis conclut que
+la suppression est prouvée. Il valide un effacement qui n'a pas eu lieu :
+
+![OpenCode sans skill : se satisfait d'un archivage](captures/09-m4-sans-skill.png)
+
+**Autre faux succès sous OpenCode (M2).** L'agent lit `overdue_duration: 4296` comme
+des « unités internes ÷ 2400 » et annonce **1,79 jour de retard** au lieu de 179 :
+
+![OpenCode sans skill : 1,79 jour de retard](captures/07-m2-sans-skill.png)
 
 ### Récapitulatif
 
@@ -259,6 +276,10 @@ Autres cas :
   `.opencode/skills/<nom>/SKILL.md`, frontmatter `name` (regex
   `^[a-z0-9]+(-[a-z0-9]+)*$`, identique au nom du dossier) et `description`
   (≤ 1024 caractères), chargement par l'outil natif `skill`.
+- **skill-creator, encore, pour l'itération** : sa boucle « tester sur de vrais
+  prompts → lire les transcriptions → corriger » a produit 4 versions du skill (voir
+  3.3 a), dont le script `scripts/biblio.py` (sa règle « regroupez dans `scripts/` le
+  travail que chaque test refait »).
 - **Pourquoi** : le format SKILL.md est commun à Claude Code et OpenCode, donc le
   générateur d'Anthropic produit directement un fichier qu'OpenCode accepte, et il
   apporte une boucle de test au lieu d'un simple gabarit.
@@ -328,32 +349,56 @@ invalide) ; appel de **chaque outil pendant le bridage** ; puis un agent
 
 ### 3.3 La preuve
 
-**a. Avant / après.**
-- *Sans skill* (exploration de l'ex. 2) : M1 → « 184 ouvrages » d'après `count_books` ;
-  M3 → bloqué sur `missing field` (4 essais) ; M4 → « supprimé » avec une preuve fausse.
-- *Avec skill* (agent neuf, sans historique, qui n'a que le skill) : voir « Test du
-  skill » ci-dessous, puis la même chose sous OpenCode pour les captures.
+**a. Avant / après** — sous OpenCode, même modèle gratuit, sessions neuves :
 
-📷 Captures : `captures/05-m1-sans-skill.png`, `captures/06-m1-avec-skill.png`,
-`captures/07-m4-sans-skill.png`, `captures/08-m4-avec-skill.png`
+| Mission | Sans skill | Avec skill |
+|---|---|---|
+| M1 | 184 « ouvrages », archivés compris, sans distinguer la circulation ; 9 min 29 | **158 en circulation + 26 archivés = 184**, répartition et exemplaires justes, contrôles croisés OK ; 57 s |
+| M2 | LN-5106 trouvé, mais **« 1,79 jour »** de retard (unités mal lues) ; 4 min 13 | **179 jours, 26,85 €**, horloge serveur et unités expliquées, anomalie de date signalée ; 54 s |
+| M4 (preuve) | voit `archived:true` mais conclut « suppression prouvée » | conclut « **archivé, pas effacé** », preuve avec et sans `include_archived` |
+| M5 | **8 joignables / 5 non joignables**, adhérents confondus (MB-221 « Paul Bernard ») | **20 joignables (19 adresses), 5 `null`, 3 clés absentes, 1 inactif** ; 52 s |
 
-**Test du skill (agent neuf, sans historique).** Consigne donnée : lire uniquement le
-skill, puis faire M1, M2 et M5 en n'obtenant les données **que** du serveur (pas d'accès
-aux fichiers de l'exploration ; M3/M4 exclues pour ne pas modifier encore les données).
-Résultat : **les trois missions réussies du premier coup**, en 41 appels, sans aucun
-bridage :
-- M1 : 158 en circulation (415 ex.) + 26 archivés = 184 (490 ex.), répartition identique ;
-- M2 : LN-5106 / MB-225 Paul Blanc / BK-1075, 179 jours, 26,85 € ;
-- M5 : 20 joignables (19 adresses, doublon MB-200/MB-237), 5 `null` + 3 champ absent,
-  MB-219 inactif à part.
-L'agent cite lui-même P1, P2, P3, P4, P5, P10 et P11 comme utiles, et ne relève aucune
-contradiction entre le skill et le serveur.
+| Sans skill | Avec skill |
+|---|---|
+| ![M1 sans skill](captures/05-m1-sans-skill.png) | ![M1 avec skill](captures/06-m1-avec-skill.png) |
+| ![M2 sans skill](captures/07-m2-sans-skill.png) | ![M2 avec skill](captures/08-m2-avec-skill.png) |
+| ![M4 sans skill](captures/09-m4-sans-skill.png) | ![M4 avec skill](captures/10-m4-avec-skill.png) |
+| ![M5 sans skill](captures/13-m5-sans-skill.png) | ![M5 avec skill](captures/12-m5-avec-skill.png) |
 
-**b. Le skill est-il lu ?** OpenCode présente les skills dans la description de son
-outil `skill` (`<available_skills>…`). On le sait chargé quand l'agent appelle
-`skill({ name: "bibliotheque-mcp" })` : l'appel apparaît dans la session OpenCode avant
-le premier appel au serveur, et l'agent cite ensuite les règles (`desk_code`,
-`include_archived`, heure de référence). 📷 `captures/09-skill-charge.png`
+M3 n'a pas été relancée sous OpenCode, et la preuve de M4 n'y a été faite qu'en lecture :
+sinon, chaque essai aurait créé un emprunt en double ou archivé des données réelles.
+
+**Ce que les tests sous OpenCode ont appris : 3 itérations du skill pour M1.** Avec un
+petit modèle, une bonne méthode ne suffit pas.
+1. *Skill v1* : la méthode est appliquée et les totaux sont justes, mais la
+   **répartition par genre est fausse**, parce que le modèle recompte 184 lignes JSON de
+   tête ([capture](captures/06a-m1-avec-skill-essai1.png)).
+2. *Skill v2* : « fais compter le serveur, genre par genre » et des valeurs de contrôle
+   dans le skill. Les titres sont justes, mais les **exemplaires par genre sont faux**,
+   alors que les totaux tombent pile sur les valeurs de contrôle : le modèle a **ajusté
+   ses chiffres pour coller au skill** ([capture](captures/06b-m1-avec-skill-essai2.png)).
+   Leçon : un skill ne doit pas contenir les réponses, elles masquent les erreurs au lieu
+   de les empêcher.
+3. *Skill v3* : valeurs retirées. Le modèle annonce **162 au lieu de 158** et saute la
+   vérification croisée ([capture](captures/06c-m1-avec-skill-essai3.png)).
+4. *Skill v4* : le skill fournit un **script de calcul**
+   ([`scripts/biblio.py`](.opencode/skills/bibliotheque-mcp/scripts/biblio.py), lecture
+   seule), que l'agent lance avec l'outil `bash` d'OpenCode. C'est la pratique
+   recommandée par le skill-creator (« si les tests réécrivent tous le même calcul,
+   fournissez le script »). Résultat : **M1, M2, M4 et M5 justes du premier coup**.
+
+**Test complémentaire (agent Claude, sans historique, skill seul)** : M1, M2 et M5
+réussies du premier coup en 41 appels, sans bridage. Un modèle plus fort n'a pas besoin
+du script, le modèle gratuit d'OpenCode si.
+
+**b. Le skill est-il lu ?** Oui. OpenCode présente les skills dans la description de son
+outil `skill` (`<available_skills>…`). Dans chaque session « avec skill », la ligne
+**`→ Skill "bibliotheque-mcp"`** apparaît **avant le premier appel au serveur**
+(`get_mission`) : c'est l'appel `skill({ name: "bibliotheque-mcp" })`. L'agent cite
+ensuite les règles du skill (P2, P3, P5, P8, P11) et lance le script fourni. Dans les
+sessions sans skill, cette ligne n'apparaît jamais.
+
+![OpenCode charge le skill avant le premier appel MCP](captures/11-skill-charge.png)
 
 **c. Pourquoi un skill et pas une command ?**
 Une *command* est un prompt que **l'humain** déclenche (`/commande`) pour une tâche

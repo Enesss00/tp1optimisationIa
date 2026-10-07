@@ -9,6 +9,7 @@ qui documente les pièges de l'API.
 |---|---|
 | [`RAPPORT.md`](RAPPORT.md) | réponses aux exercices 1 à 3 et journal de bord des 5 missions |
 | [`.opencode/skills/bibliotheque-mcp/SKILL.md`](.opencode/skills/bibliotheque-mcp/SKILL.md) | **le skill** : 12 pièges (outil / observation / réalité / règle) et recettes par mission |
+| [`.opencode/skills/bibliotheque-mcp/scripts/biblio.py`](.opencode/skills/bibliotheque-mcp/scripts/biblio.py) | script fourni avec le skill : calculs déterministes des missions (lecture seule) |
 | [`opencode.json`](opencode.json) | déclaration du serveur MCP, sans token (`{env:…}`) |
 | [`.env.example`](.env.example) | modèle des deux variables à fournir (le vrai `.env` est ignoré par Git) |
 | [`outils/verifier.py`](outils/verifier.py) | rejoue les preuves en **lecture seule** et recalcule les missions |
@@ -16,7 +17,7 @@ qui documente les pièges de l'API.
 | [`journal/verification.txt`](journal/verification.txt) | sortie de `verifier.py` au moment du rendu (12/12 OK) |
 | [`journal/00-tools-list.json`](journal/00-tools-list.json) | réponse brute de `tools/list` |
 | `journal/appels-bruts.jsonl.gz` | tous les appels de l'exploration, horodatés, avec la réponse brute |
-| [`captures/`](captures/) | captures d'écran OpenCode référencées dans le rapport |
+| [`captures/`](captures/) | 15 captures du **vrai OpenCode 1.18.35** (outils, réponse brute, missions, avant/après skill, chargement du skill), intégrées au rapport |
 
 ## Vérifier en 2 minutes
 
