@@ -21,6 +21,28 @@ serveur**, **règle**.
 
 ---
 
+## Outil fourni : `scripts/biblio.py` (à utiliser pour tous les calculs)
+
+Un modèle recompte mal des dizaines de lignes JSON : lors des tests, l'agent a annoncé
+162 titres au lieu de 158 alors qu'il appliquait la bonne méthode. Pour tout comptage,
+classement ou calcul de retard, **lance ce script avec l'outil bash** au lieu de
+compter toi-même. Il applique toutes les règles ci-dessous (débit, pagination,
+détection du bridage, horloge figée, unités) et ne fait **que des lectures** :
+
+```bash
+python3 .opencode/skills/bibliotheque-mcp/scripts/biblio.py inventaire        # M1
+python3 .opencode/skills/bibliotheque-mcp/scripts/biblio.py retards           # M2
+python3 .opencode/skills/bibliotheque-mcp/scripts/biblio.py relance           # M5
+python3 .opencode/skills/bibliotheque-mcp/scripts/biblio.py emprunts MB-202   # preuves M3/M4
+python3 .opencode/skills/bibliotheque-mcp/scripts/biblio.py appel get_book '{"book_id":"BK-1042"}'
+```
+
+Il lit `BIBLIO_MCP_URL` et `BIBLIO_TOKEN` dans l'environnement (ceux d'OpenCode). Recopie
+sa sortie telle quelle dans ta réponse. Les **écritures** (`create_loan`, `delete_loan`)
+se font avec les outils MCP, puis se vérifient avec `biblio.py emprunts <id>`.
+
+---
+
 ## 0. Méthode générale (à appliquer à chaque mission)
 
 1. **Débit ≤ 50 appels/minute** (un appel toutes les 1,2 s) : la limite est 60, et un
@@ -239,7 +261,7 @@ mentionne quand elles touchent la réponse :
 Lire l'énoncé exact avec `get_mission {mission_id:"Mx"}`. Les recettes ci-dessous
 supposent que tu appliques la méthode générale (§0).
 
-**M1 — Inventaire.** La mission demande un nombre d'**ouvrages** (titres) et sa
+**M1 — Inventaire.** → `biblio.py inventaire`. La mission demande un nombre d'**ouvrages** (titres) et sa
 répartition par genre. Les comptes viennent du **serveur**, pas d'un recomptage :
 un `list_books {genre:<g>, limit:50}` par genre (`roman, policier, jeunesse, essai, bd,
 poésie`), sans puis avec `include_archived:true` (12 appels, une seule page chacun) ;
@@ -251,7 +273,7 @@ sont calculés par un script sur les réponses brutes. Une somme faite de tête 
 150 lignes est fausse (observé lors des tests). Si tu ne peux pas exécuter de
 script, écris « non calculé » plutôt qu'un chiffre approximatif.
 
-**M2 — Le retardataire.** (Ne pas chercher un `status:"overdue"`, il n'existe pas, P11.)
+**M2 — Le retardataire.** → `biblio.py retards`. (Ne pas chercher un `status:"overdue"`, il n'existe pas, P11.)
 `list_loans {status:"open", limit:50}` paginé en entier. La liste est triée par
 `loan_id`, pas par date : avec la limite par défaut de 20, le plus en retard (40ᵉ des
 ouverts) n'est pas sur la 1ʳᵉ page. Retard = `1791277200 − due_at`
@@ -260,7 +282,7 @@ pour les noms ; `get_member_fees` pour le montant en € (`balance_due`, P4 ; un
 Mentionner l'anomalie de date de LN-5106 (P12). Vérifier
 `balance_due = Σ jours de retard de ses emprunts ouverts × 0,15`.
 
-**M3 — La réinscription.** Les « fiches » `get_member` ne contiennent pas les emprunts
+**M3 — La réinscription.** → avant/après : `biblio.py emprunts MB-214`. Les « fiches » `get_member` ne contiennent pas les emprunts
 (la description dit seulement « member record ») : la vérification se fait avec
 `list_loans {member_id}`. D'abord `list_loans {member_id:"MB-214"}` : si un emprunt
 **ouvert** de BK-1042 existe déjà, ne pas en recréer (`create_loan` ne protège pas
@@ -268,14 +290,14 @@ contre les doublons, cf. P12). Sinon `create_loan` avec `desk_code` (P7), et vé
 que la réponse contient un `loan.loan_id` (un `loan: null` signifie bridé, P1). Vérifier avec
 `list_loans {member_id}` et `get_member_fees.open_loans` +1.
 
-**M4 — Le ménage.** Valider l'id avec `get_member` (P11), puis `list_loans {member_id, status:"returned"}` → **noter tous les
+**M4 — Le ménage.** → avant/après : `biblio.py emprunts MB-202`. Valider l'id avec `get_member` (P11), puis `list_loans {member_id, status:"returned"}` → **noter tous les
 `loan_id` d'abord** (la pagination est par offset : archiver pendant qu'on pagine
 décale les pages) → `delete_loan` sur chacun, en vérifiant `deleted: true` (un
 `deleted: false` avec `ok: true` = bridé, P1) → preuve avec `list_loans {member_id, include_archived:true}` : les emprunts
 sont toujours là avec `archived:true` (P8). Rapporter honnêtement : masqués, pas
 effacés. Ne pas toucher aux emprunts encore ouverts.
 
-**M5 — La relance.** Emprunts ouverts avec `due_at < 1791277200` (49 sur 54 ouverts) → ensemble des
+**M5 — La relance.** → `biblio.py relance`. Emprunts ouverts avec `due_at < 1791277200` (49 sur 54 ouverts) → ensemble des
 adhérents → classer : joignable (actif + e-mail), e-mail `null`, clé e-mail absente,
 inactif (P10). Signaler les adresses en double.
 
