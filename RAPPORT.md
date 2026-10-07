@@ -2,7 +2,8 @@
 
 Serveur : `bibliotheque-municipale` v1.0.0 (MCP, transport HTTP « streamable »).
 Skill produit : [`.opencode/skills/bibliotheque-mcp/SKILL.md`](.opencode/skills/bibliotheque-mcp/SKILL.md).
-Journal brut (chaque appel horodaté + réponse brute du serveur) : [`journal/appels-bruts.jsonl`](journal/appels-bruts.jsonl).
+Journal brut (chaque appel horodaté + réponse brute du serveur) : [`journal/appels-bruts.jsonl.gz`](journal/appels-bruts.jsonl.gz).
+Vérification automatique (lecture seule) : `python3 outils/verifier.py` → [`journal/verification.txt`](journal/verification.txt) (12/12 OK). Mode d'emploi : [`README.md`](README.md).
 
 > **Note de méthode.** L'exploration de l'API et l'écriture du skill ont été faites avec
 > un agent de code (Claude Code), qui appelait le serveur MCP avec un petit client
@@ -266,7 +267,7 @@ Autres cas :
 
 12 entrées. Chacune répond à : outil concerné / ce qu'on observe / ce que fait
 réellement le serveur / règle. Les preuves (appel + réponse brute) sont dans le skill
-et dans `journal/appels-bruts.jsonl`.
+et dans `journal/appels-bruts.jsonl.gz`.
 
 | # | Piège | Outil(s) |
 |---|---|---|
